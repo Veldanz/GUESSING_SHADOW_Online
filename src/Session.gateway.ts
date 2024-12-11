@@ -1,194 +1,32 @@
-import { SubscribeMessage, WebSocketGateway, WebSocketServer } from "@nestjs/websockets";
+import { SubscribeMessage, WebSocketGateway, WebSocketServer, OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { Server, Socket } from "socket.io";
 import { Logger } from "@nestjs/common";
 import { GameStateContent } from "~/data/gameState";
 
-@WebSocketGateway({
-  cors: {
-      origin: '*',
-  },
-})
-export class SessionGateway {
-  @WebSocketServer()
-  private server!: Server;
-  private gameState: GameStateContent | null = null;
-  private readonly logContext = "SessionGateway";
+@WebSocketGateway({ cors: true })
+export class SessionGateway implements OnGatewayConnection, OnGatewayDisconnect {
+    @WebSocketServer() server: Server;
+    private gameState: GameStateContent = {} as GameStateContent;
 
-  // Timer-related properties
-  private timerInterval: NodeJS.Timeout | null = null;
-  private timeRemaining: number = 10;
-  private readonly TOTAL_TIME = 10; // Total game time
-  private readonly TIMER_INTERVAL = 1000; // 1 second updates
-
-  async handleConnection(socket: Socket): Promise<void> {
-      const roomId = "defaultRoom";
-      socket.join(roomId);
-      Logger.log(`Player connected: ${socket.id}`, this.logContext);
-
-      if (this.gameState) {
-          this.server.to(socket.id).emit("serverGameUpdate", this.gameState);
-
-           // Send current timer state to newly connected player
-          this.server.to(socket.id).emit("serverTimerUpdate", {
-            timeRemaining: this.timeRemaining,
-            totalTime: this.TOTAL_TIME
-        });
-      }
-  }
-
-  @SubscribeMessage('clientStartGame')
-  handleStartGame(socket: Socket): void {
-      const roomId = "defaultRoom";
-      this.gameState = {
-          shadowAnswer: 'shadow_elephant_t',
-          guessedShadow: [],
-          wrongGuessCount: 0,
-      };
-      
-      // Start the synchronized timer
-      this.startTimer(roomId);
-      this.broadcastGameState(roomId);
-      Logger.log('Game started', this.logContext);
-  }
-
-  private startTimer(roomId: string): void {
-    // Reset timer
-    this.timeRemaining = this.TOTAL_TIME;
-
-    // Clear any existing interval
-    if (this.timerInterval) {
-        clearInterval(this.timerInterval);
+    handleConnection(socket: Socket) {
+        console.log(`Client connected: ${socket.id}`);
     }
 
-    // Start new timer interval
-    this.timerInterval = setInterval(() => {
-        this.timeRemaining--;
-
-        // Broadcast timer update to all players
-        this.server.to(roomId).emit("serverTimerUpdate", {
-            timeRemaining: this.timeRemaining,
-            totalTime: this.TOTAL_TIME
-        });
-
-        // Handle timer expiration
-        if (this.timeRemaining <= 0) {
-            this.handleTimerExpiration(roomId);
-        }
-    }, this.TIMER_INTERVAL);
-  }
-
-  private handleTimerExpiration(roomId: string): void {
-        this.stopTimer(roomId);
-        this.gameState = null;
-        this.server.to(roomId).emit('serverShowGameOverScreen', { 
-            //text: "Time's up! Game Over!" 
-        });
+    handleDisconnect(socket: Socket) {
+        console.log(`Client disconnected: ${socket.id}`);
     }
 
-  @SubscribeMessage('clientMouseMove')
-  handleMouseMove(socket: Socket, payload: { x: number, y: number }): void {
-      const roomId = "defaultRoom";
-      // Broadcast mouse position with socket ID to identify different players
-      socket.to(roomId).emit('serverMouseMove', { 
-          socketId: socket.id, 
-          x: payload.x, 
-          y: payload.y 
-      });
-  }
-
-  @SubscribeMessage('clientShadowHover')
-  handleShadowHover(socket: Socket, payload: { texture: string, isHovering: boolean }): void {
-      const roomId = "defaultRoom";
-      // Broadcast hover state to all other players
-      socket.to(roomId).emit('serverShadowHover', payload);
-  }
-
-  @SubscribeMessage('clientGameOver')
-  handleGameOver(socket: Socket): void {
-      const roomId = "defaultRoom";
-      this.server.to(roomId).emit('serverMessage', { text: "Game Over!" });
-      this.gameState = null;
-  }
-
-  @SubscribeMessage('clientGuessShadow')
-    handleGuessShadow(socket: Socket, payload: { guess: string }): void {
-        if (!this.gameState) {
-            Logger.warn("No active game state", this.logContext);
-            return;
-        }
-
-        const { guess } = payload;
-        const roomId = "defaultRoom";
-
-        if (guess === this.gameState.shadowAnswer) {
-            this.server.to(roomId).emit('serverMessage', { text: "Correct! Well done!" });
-            nextLevel: true  // Add a flag to indicate level progression
-            //this.stopTimer(roomId);
-            this.gameState = null;
-        } else {
-            this.gameState.wrongGuessCount++;
-            this.gameState.guessedShadow.push(guess);
-
-            if (this.gameState.wrongGuessCount >= 3) {
-                // Explicitly tell clients to show game over screen
-                this.server.to(roomId).emit('serverShowGameOverScreen', { 
-                    text: "Game Over!" 
-                });
-                this.stopTimer(roomId);
-                this.gameState = null;
-            } else {
-                this.server.to(roomId).emit('serverMessage', { 
-                    text: `Incorrect! ${3 - this.gameState.wrongGuessCount} tries remaining!` 
-                });
-            }
-        }
-
-        this.broadcastGameState(roomId);
+    @SubscribeMessage('joinRoom')
+    handleJoinRoom(socket: Socket, room: string = 'defaultRoom'): void {
+        socket.join(room);
+        console.log(`Client ${socket.id} joined room ${room}`);
     }
 
-  @SubscribeMessage("clientResetGame")
-    handleResetGame(socket: Socket): void {
-        Logger.log(`Game reset by player: ${socket.id}`, this.logContext);
-
-        // Stop existing timer if running
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-
-        // Completely reset game state
-        this.gameState = {
-            shadowAnswer: "shadow_elephant_t",
-            guessedShadow: [],
-            wrongGuessCount: 0,
-        };
-
-        const roomId = "defaultRoom";
-        
-        // Restart timer
-        this.startTimer(roomId);
-        
-        // Broadcast clean reset
-        this.server.to(roomId).emit('serverGameReset');
-        this.broadcastGameState(roomId);
-    }
-
-  private broadcastGameState(roomId: string): void {
-      Logger.log("Broadcasting game state to all players", this.logContext);
-      this.server.to(roomId).emit("serverGameUpdate", this.gameState);
-  }
-
-  private stopTimer(roomId: string): void {
-        // Stop the timer
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-
-        // Broadcast final timer state (0)
-        this.server.to(roomId).emit("serverTimerUpdate", {
-            timeRemaining: 0,
-            totalTime: this.TOTAL_TIME
-        });
+    @SubscribeMessage('clientGameUpdate')
+    handleGameUpdate(socket: Socket, gameState: GameStateContent): void {
+        // Simply broadcast the received game state to all players in the room
+        this.gameState = { ...gameState };
+        this.server.to('defaultRoom').emit('serverGameUpdate', this.gameState);
+        console.log(`Game state updated by ${socket.id}`);
     }
 }
