@@ -37,23 +37,18 @@ export default class Level extends Phaser.Scene {
             this.initGame('debug');
         });
 
-                // Establish WebSocket connection
                 this.socket = io('http://localhost:3000', {
-                    // Optional connection options
                     reconnection: true,
                     reconnectionAttempts: 5,
                     reconnectionDelay: 1000
                 });
         
-                // Handle socket connection
                 this.socket.on('connect', () => {
                     console.log('Socket connected with ID:', this.socket.id);
                     
-                    // Join a room when connected
                     this.joinRoom();
                 });
         
-                // Listen for server game updates via socket
                 this.socket.on('serverGameUpdate', (gameState) => {
                     this.updateState(gameState);
                 });
@@ -63,7 +58,6 @@ export default class Level extends Phaser.Scene {
     }
 
     joinRoom() {
-        // Use user info to create a unique room or use a predefined room
         const roomName = this.userInfo?.preferred_username || 'defaultGameRoom';
         
         this.socket.emit('joinRoom', roomName);
@@ -129,10 +123,8 @@ export default class Level extends Phaser.Scene {
 
     postMessage = (message: Message) => {
         if (message.type === 'clientGameUpdate') {
-            // Use socket to emit game updates
             this.socket.emit('clientGameUpdate', message.payload);
         } else {
-            // Fallback to existing postMessage for other message types
             if (window.parent !== window) {
                 window.parent.postMessage(message, '*');
             }
@@ -156,7 +148,6 @@ export default class Level extends Phaser.Scene {
                 currentState: isCorrect ? "WaitingState" : "GuessState"
             };
 
-            // Emit game update via socket
             this.socket.emit('clientGameUpdate', updatedGameState);
 
             isCorrect ? this.showRightStateUI() : this.showWrongStateUI();
@@ -220,9 +211,7 @@ export default class Level extends Phaser.Scene {
             this.initGame(this.gameState!.shadowAnswer);
         }
     
-        // Process previously guessed shadows
         this.gameState?.guessShadow.forEach(guessShadow => {
-            // Potentially update UI or game state based on previous guesses
             this.guessShadow(guessShadow);
         });
     }
@@ -251,21 +240,17 @@ export default class Level extends Phaser.Scene {
     setupShadowInteractions() {
         console.log("Setup Shadow Interactions - Start");
         
-        // Destroy existing shadow container if it exists
         if (this.shadowContainer) {
             this.shadowContainer.destroy();
         }
         
-        // Create a new shadow container
         this.shadowContainer = new ShadowContainer(this, 0, 0);
     
-        // Ensure gameState and shadows exist
         if (!this.gameState || !this.gameState.shadows) {
             console.error("Game state or shadows are undefined");
             return;
         }
     
-        // Create unique shadows
         const uniqueShadows = this.gameState.shadows.filter(
             (shadowData, index, self) => 
                 index === self.findIndex((t) => t.texture === shadowData.texture)
@@ -280,11 +265,9 @@ export default class Level extends Phaser.Scene {
                 shadowData.isCorrect
             );
     
-            // Add shadow to the container
             this.shadowContainer.addShadow(shadow);
         });
     
-        // Add the shadow container to the scene
         this.add.existing(this.shadowContainer);
     
         console.log("Setup Shadow Interactions - Complete");
@@ -342,33 +325,27 @@ export default class Level extends Phaser.Scene {
     }
 
     handleShadowClick(texture: string) {
-        // Only allow guessing when in the correct game state
+        // Check if the game is in right state or not.
         if (!this.gameState || this.gameState.currentState !== "WaitingState") return;
     
-        // Find the shadow in the shadows array
         const shadowToGuess = this.gameState.shadows.find(shadow => shadow.texture === texture);
         if (!shadowToGuess) return;
     
-        // Check if the shadow has already been guessed
         if (this.gameState.guessShadow.includes(texture)) {
             console.log("This shadow has already been guessed");
             return;
         }
     
-        // Update the specific shadow's state
         const updatedShadows = this.gameState.shadows.map(shadow => 
             shadow.texture === texture 
                 ? { ...shadow, isSelected: true, isHovered: false }
                 : shadow
         );
     
-        // Add the guessed shadow to the list of guessed shadows
         const updatedGuessShadows = [...(this.gameState.guessShadow || []), texture];
     
-        // Determine if the guess is correct
         const isCorrect = this.isGuessCorrect(texture);
     
-        // Update game state
         this.gameState = {
             ...this.gameState,
             shadows: updatedShadows,
@@ -382,23 +359,20 @@ export default class Level extends Phaser.Scene {
             )
         };
     
-        // Update the visual representation of the shadow
         const shadowContainer = this.shadowContainer;
         if (shadowContainer) {
             const shadowObject = shadowContainer.getShadowByTexture(texture);
             if (shadowObject) {
-                shadowObject.setAlpha(0.5);  // Reduce opacity
-                shadowObject.setInteractive(false);  // Disable interaction
+                shadowObject.setAlpha(0.5);
+                shadowObject.setInteractive(false);
             }
         }
     
-        // Send the updated game state
         this.postMessage({
             type: "clientGameUpdate",
             payload: this.gameState
         });
     
-        // Show appropriate UI based on the guess
         isCorrect ? this.showRightStateUI() : this.showWrongStateUI();
     }
 

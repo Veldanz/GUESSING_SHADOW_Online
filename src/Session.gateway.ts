@@ -11,14 +11,14 @@ import { GameStartDto } from "./data/GameStartDto";
 
 @WebSocketGateway({
     cors: {
-        origin: 'http://localhost:9000', // Frontend origin
+        origin: 'http://localhost:9000',
         methods: ['GET', 'POST'],
-        credentials: true, // Include cookies/auth headers
+        credentials: true,
     },
 })
 export class SessionGateway {
   @WebSocketServer()
-  server: Server;  // This is the WebSocket server
+  server: Server;
 
   logContext : string = `SessionGateway`;
 
@@ -88,12 +88,12 @@ export class SessionGateway {
     const client = this.sessionService.getClientFromSocket(socket);
     if (!client) {
         Logger.log(`Client not found for socket: ${socket.id}`, this.logContext);
-        return; // Exit early if client is undefined
+        return;
       }
     const room = this.sessionService.getRoomFromSocket(socket);
     if (!room) {
         Logger.log(`Room not found for socket: ${socket.id}`, this.logContext);
-        return; // Exit early if room is undefined
+        return;
       }
 
     
