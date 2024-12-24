@@ -23,7 +23,7 @@ export default class Level extends Phaser.Scene {
 
     gameInfo: GameInfo | undefined;
     gameState: GameStateContent | undefined;
-    userInfo: UserInformation | undefined;
+    userInfo: UserInformation | undefined; // Get user info from the server.
     private key_start_debug!: Phaser.Input.Keyboard.Key;
 
     create() {
