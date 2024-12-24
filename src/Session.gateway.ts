@@ -1,194 +1,134 @@
 import { SubscribeMessage, WebSocketGateway, WebSocketServer } from "@nestjs/websockets";
-import { Server, Socket } from "socket.io";
+import { Server, Socket } from 'socket.io';
 import { Logger } from "@nestjs/common";
-import { GameStateContent } from "~/data/gameState";
+import * as jwt from 'jsonwebtoken';
+import { SessionService } from './SessionService';
+import { ManagedRoom } from "./ManagedRoom";
+import { ManagedClient } from "./ManagedClient";
+import { GamePermission } from "./data/gameState";
+import { GameStartDto } from "./data/GameStartDto";
+
 
 @WebSocketGateway({
-  cors: {
-      origin: '*',
-  },
+    cors: {
+        origin: 'http://localhost:9000',
+        methods: ['GET', 'POST'],
+        credentials: true,
+    },
 })
 export class SessionGateway {
   @WebSocketServer()
-  private server!: Server;
-  private gameState: GameStateContent | null = null;
-  private readonly logContext = "SessionGateway";
+  server: Server;
 
-  // Timer-related properties
-  private timerInterval: NodeJS.Timeout | null = null;
-  private timeRemaining: number = 10;
-  private readonly TOTAL_TIME = 10; // Total game time
-  private readonly TIMER_INTERVAL = 1000; // 1 second updates
+  logContext : string = `SessionGateway`;
 
-  async handleConnection(socket: Socket): Promise<void> {
-      const roomId = "defaultRoom";
-      socket.join(roomId);
-      Logger.log(`Player connected: ${socket.id}`, this.logContext);
+  
 
-      if (this.gameState) {
-          this.server.to(socket.id).emit("serverGameUpdate", this.gameState);
 
-           // Send current timer state to newly connected player
-          this.server.to(socket.id).emit("serverTimerUpdate", {
-            timeRemaining: this.timeRemaining,
-            totalTime: this.TOTAL_TIME
-        });
+  constructor(private sessionService : SessionService) {
+  }
+
+  // Handle new client connection
+  async handleConnection(socket: Socket) {
+    try {
+      const token = Array.isArray(socket.handshake.query.token)
+        ? socket.handshake.query.token[0]
+        : socket.handshake.query.token;
+  
+      if (!token) {
+        throw new Error('No authentication token provided');
       }
-  }
-
-  @SubscribeMessage('clientStartGame')
-  handleStartGame(socket: Socket): void {
-      const roomId = "defaultRoom";
-      this.gameState = {
-          shadowAnswer: 'shadow_elephant_t',
-          guessedShadow: [],
-          wrongGuessCount: 0,
-      };
-      
-      // Start the synchronized timer
-      this.startTimer(roomId);
-      this.broadcastGameState(roomId);
-      Logger.log('Game started', this.logContext);
-  }
-
-  private startTimer(roomId: string): void {
-    // Reset timer
-    this.timeRemaining = this.TOTAL_TIME;
-
-    // Clear any existing interval
-    if (this.timerInterval) {
-        clearInterval(this.timerInterval);
+  
+      const userInfo = jwt.verify(token, this.sessionService.apiSecret);
+  
+      if (typeof userInfo === 'string' || !('room' in userInfo)) {
+        throw new Error('Invalid token payload: Missing "room" property');
+      }
+  
+      let room = this.sessionService.getRoom(userInfo.room);
+      if (!room) {
+        room = await this.sessionService.createRoom(userInfo.room);
+      }
+  
+      const client = new ManagedClient(userInfo, socket);
+      this.sessionService.clientJoin(client, room);
+      client.socket.join(room.sid);
+  
+      Logger.log(`Client connected: ${socket.id} ${JSON.stringify(userInfo)}`, this.logContext);
+      socket.emit('handshakeResponse', { livekitUrl: this.sessionService.livekitUrl });
+    } catch (error) {
+      if (error instanceof Error) {
+        Logger.log(`Token verification failed: ${error.message}`, this.logContext);
+      } else {
+        Logger.log(`Unexpected error occurred: ${JSON.stringify(error)}`, this.logContext);
+      }
+      socket.disconnect();
     }
+  }
+  
+  
 
-    // Start new timer interval
-    this.timerInterval = setInterval(() => {
-        this.timeRemaining--;
-
-        // Broadcast timer update to all players
-        this.server.to(roomId).emit("serverTimerUpdate", {
-            timeRemaining: this.timeRemaining,
-            totalTime: this.TOTAL_TIME
-        });
-
-        // Handle timer expiration
-        if (this.timeRemaining <= 0) {
-            this.handleTimerExpiration(roomId);
-        }
-    }, this.TIMER_INTERVAL);
+  // Handle client disconnect
+  handleDisconnect(socket: Socket) {
+    const managedClient = this.sessionService.getClientFromSocket(socket);
+    if (managedClient) this.sessionService.clientLeave(managedClient);
+    Logger.log(`Client disconnected: ${socket.id} ${managedClient ? managedClient.identity : ""}`, this.logContext);
   }
 
-  private handleTimerExpiration(roomId: string): void {
-        this.stopTimer(roomId);
-        this.gameState = null;
-        this.server.to(roomId).emit('serverShowGameOverScreen', { 
-            //text: "Time's up! Game Over!" 
-        });
-    }
+  @SubscribeMessage('clientChatMessage')
+  handleChatMessage(socket: Socket, payload: any) {
+    Logger.log(`chatMessage: ${JSON.stringify(payload)}`);
+    const room = this.sessionService.getRoomFromSocket(socket);
 
-  @SubscribeMessage('clientMouseMove')
-  handleMouseMove(socket: Socket, payload: { x: number, y: number }): void {
-      const roomId = "defaultRoom";
-      // Broadcast mouse position with socket ID to identify different players
-      socket.to(roomId).emit('serverMouseMove', { 
-          socketId: socket.id, 
-          x: payload.x, 
-          y: payload.y 
-      });
+    this.server.to(room.sid).emit('chatMessage', payload);
   }
 
-  @SubscribeMessage('clientShadowHover')
-  handleShadowHover(socket: Socket, payload: { texture: string, isHovering: boolean }): void {
-      const roomId = "defaultRoom";
-      // Broadcast hover state to all other players
-      socket.to(roomId).emit('serverShadowHover', payload);
+  @SubscribeMessage('clientGameStart')
+  handleGameStart(socket: Socket, payload: GameStartDto,) {
+    const client = this.sessionService.getClientFromSocket(socket);
+    if (!client) {
+        Logger.log(`Client not found for socket: ${socket.id}`, this.logContext);
+        return;
+      }
+    const room = this.sessionService.getRoomFromSocket(socket);
+    if (!room) {
+        Logger.log(`Room not found for socket: ${socket.id}`, this.logContext);
+        return;
+      }
+
+    
+
+    payload.gameId = "Find gameID and get url here";
+
+    const teacherPermission : GamePermission = {identity: client.identity, permissions: ["teacher"]};
+
+
+    room.gameInfo = {
+      gameUrl: "http://localhost:3000",
+      permissionList: [ 
+        teacherPermission
+      ],
+    };
+
+    this.server.to(room.sid).emit('serverGameInfo', room.gameInfo);
+    this.server.to(room.sid).emit('serverGameUpdate', {});
   }
 
-  @SubscribeMessage('clientGameOver')
-  handleGameOver(socket: Socket): void {
-      const roomId = "defaultRoom";
-      this.server.to(roomId).emit('serverMessage', { text: "Game Over!" });
-      this.gameState = null;
+  @SubscribeMessage('clientGameStop')
+  handleGameStop(socket: Socket, payload: any) {
+    const room = this.sessionService.getRoomFromSocket(socket);
+    room.gameInfo = null;
+
+    this.server.to(room.sid).emit('serverGameInfo', room.gameInfo);
   }
 
-  @SubscribeMessage('clientGuessShadow')
-    handleGuessShadow(socket: Socket, payload: { guess: string }): void {
-        if (!this.gameState) {
-            Logger.warn("No active game state", this.logContext);
-            return;
-        }
+  @SubscribeMessage('clientGameUpdate')
+  handleGameUpdate(socket: Socket, payload: any) {
+    const room = this.sessionService.getRoomFromSocket(socket);
+    room.gameState = payload;
+    console.info(`clientGameUpdate: ${JSON.stringify(room.gameState)}`);
 
-        const { guess } = payload;
-        const roomId = "defaultRoom";
-
-        if (guess === this.gameState.shadowAnswer) {
-            this.server.to(roomId).emit('serverMessage', { text: "Correct! Well done!" });
-            nextLevel: true  // Add a flag to indicate level progression
-            //this.stopTimer(roomId);
-            this.gameState = null;
-        } else {
-            this.gameState.wrongGuessCount++;
-            this.gameState.guessedShadow.push(guess);
-
-            if (this.gameState.wrongGuessCount >= 3) {
-                // Explicitly tell clients to show game over screen
-                this.server.to(roomId).emit('serverShowGameOverScreen', { 
-                    text: "Game Over!" 
-                });
-                this.stopTimer(roomId);
-                this.gameState = null;
-            } else {
-                this.server.to(roomId).emit('serverMessage', { 
-                    text: `Incorrect! ${3 - this.gameState.wrongGuessCount} tries remaining!` 
-                });
-            }
-        }
-
-        this.broadcastGameState(roomId);
-    }
-
-  @SubscribeMessage("clientResetGame")
-    handleResetGame(socket: Socket): void {
-        Logger.log(`Game reset by player: ${socket.id}`, this.logContext);
-
-        // Stop existing timer if running
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-
-        // Completely reset game state
-        this.gameState = {
-            shadowAnswer: "shadow_elephant_t",
-            guessedShadow: [],
-            wrongGuessCount: 0,
-        };
-
-        const roomId = "defaultRoom";
-        
-        // Restart timer
-        this.startTimer(roomId);
-        
-        // Broadcast clean reset
-        this.server.to(roomId).emit('serverGameReset');
-        this.broadcastGameState(roomId);
-    }
-
-  private broadcastGameState(roomId: string): void {
-      Logger.log("Broadcasting game state to all players", this.logContext);
-      this.server.to(roomId).emit("serverGameUpdate", this.gameState);
+    this.server.to(room.sid).emit('serverGameUpdate', room.gameState);
   }
-
-  private stopTimer(roomId: string): void {
-        // Stop the timer
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-
-        // Broadcast final timer state (0)
-        this.server.to(roomId).emit("serverTimerUpdate", {
-            timeRemaining: 0,
-            totalTime: this.TOTAL_TIME
-        });
-    }
 }
+export { SessionService };

@@ -1,9 +1,8 @@
 import { Module } from '@nestjs/common';
 import { SessionGateway } from './Session.gateway';
+import { SessionService } from './SessionService';
 
 @Module({
-  imports: [],
-  providers: [SessionGateway],  // Register your gateway
-  controllers: []
+  //providers: [SessionGateway, SessionService]
 })
 export class AppModule {}

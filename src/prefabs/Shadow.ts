@@ -7,7 +7,7 @@ export default class Shadow extends Phaser.GameObjects.Image {
     } else {
         this.disableInteractive();
     }
-}
+  }
   private isCorrect: boolean;
 
   constructor(scene: Phaser.Scene, x: number, y: number, texture: string, isCorrect: boolean) {
@@ -17,16 +17,19 @@ export default class Shadow extends Phaser.GameObjects.Image {
     // Add to the scene
     scene.add.existing(this);
 
+    // Set default scale and size
+    this.setScale(0.45);
+
     // Enable input interaction
     this.setInteractive();
 
     // Handle click interactions
     this.on("pointerdown", () => {
-      // Pass the guess result to the scene's handler
+      // Pass the texture to the scene's handler
       if (scene instanceof Phaser.Scene) {
-        const levelScene = scene as any; // Ensure dynamic typing here
+        const levelScene = scene as any;
         if (typeof levelScene.handleShadowClick === "function") {
-          levelScene.handleShadowClick(this.isCorrect);
+          levelScene.handleShadowClick(this.texture.key); // Changed from this.isCorrect to this.texture.key
         } else {
           console.warn("handleShadowClick not found on the scene.");
         }
