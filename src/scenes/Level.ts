@@ -21,10 +21,10 @@ export default class Level extends Phaser.Scene {
     private wrongText: Phaser.GameObjects.Text | null = null;
     private isHandlingClick: boolean = false;
 
-    gameInfo: GameInfo | undefined;
-    gameState: GameStateContent | undefined;
+    gameInfo: GameInfo | undefined; // Get game info from the server.
+    gameState: GameStateContent | undefined; // Get game state from the server.
     userInfo: UserInformation | undefined; // Get user info from the server.
-    private key_start_debug!: Phaser.Input.Keyboard.Key;
+    private key_start_debug!: Phaser.Input.Keyboard.Key; // Debug key (used for testing).
 
     create() {
         this.editorCreate();
@@ -38,6 +38,7 @@ export default class Level extends Phaser.Scene {
         this.requestUserInfo();
     }
 
+    // Start the game.
     requestGameStart() {
         const startButton = this.add.text(this.scale.width / 2, this.scale.height / 2, "Start Game", {
             fontSize: "32px",
@@ -52,6 +53,7 @@ export default class Level extends Phaser.Scene {
         });
     }
 
+    // Request user info from the server.
     requestUserInfo() {
         this.postMessage({
             type: "requestInit",
@@ -59,6 +61,7 @@ export default class Level extends Phaser.Scene {
         });
     }
 
+    // Handle message from the server.
     handleMessage = (event: MessageEvent) => {
         console.info('PHASER handleMessage:', JSON.stringify(event.data));
 
@@ -99,6 +102,7 @@ export default class Level extends Phaser.Scene {
         }
     };
 
+    // Post message to the server.
     postMessage = (message : Message) => {
 		// For web environment
 		if (window.parent !== window) {
@@ -117,6 +121,7 @@ export default class Level extends Phaser.Scene {
 		}
 	};
 
+    // Method uses when the player guesses the shadow.
     guessShadow(texture: string) {
         try {
             if (!this.gameState || this.gameState.currentState !== "WaitingState") return;
@@ -141,6 +146,7 @@ export default class Level extends Phaser.Scene {
         }
     }
 
+    // Initialize the game.
     initGame(mainPicture: string) {
         if (this.gameState?.currentState === "WaitingState") {
             console.warn("Game already initialized.");
@@ -178,6 +184,7 @@ export default class Level extends Phaser.Scene {
         this.setupShadowInteractions();
     }
 
+    // Update the game state.
     updateState(newState: any) {
         if (!newState) return;
     
@@ -199,18 +206,21 @@ export default class Level extends Phaser.Scene {
         });
     }
 
+    // Check if the player's guess is correct.
     isGuessCorrect(texture: string): boolean {
         console.log("Checking texture:", texture);
         console.log("Correct shadow:", this.gameState?.correctShadow);
         return texture === this.gameState?.correctShadow;
     }
 
+    // Add the main picture to the scene.
     addMainPicture() {
         const picConfig = this.gameState?.mainPicture;
         if (!picConfig) return;
         this.add.image(picConfig.position.x, picConfig.position.y, picConfig.key).setScale(picConfig.scale);
     }
 
+    // Generate shadows for the game.
     generateShadows() {
         return [
             { texture: "shadow_elephant_f_1", position: { x: 200, y: 800 }, isCorrect: false, isHovered: false, isSelected: false },
@@ -220,6 +230,7 @@ export default class Level extends Phaser.Scene {
         ];
     }
 
+    // Setup shadow interactions.
     setupShadowInteractions() {
         console.log("Setup Shadow Interactions - Start");
         
@@ -256,6 +267,7 @@ export default class Level extends Phaser.Scene {
         console.log("Setup Shadow Interactions - Complete");
     }
 
+    // Show the right state UI.
     showRightStateUI() {
         this.createText({
             x: this.scale.width / 2,
@@ -273,6 +285,7 @@ export default class Level extends Phaser.Scene {
         });
     }
 
+    // Show the wrong state UI.
     showWrongStateUI() {
         if (this.wrongText) {
             this.wrongText.destroy();
@@ -300,6 +313,7 @@ export default class Level extends Phaser.Scene {
         });
     }
 
+    // Create text uses when the game need to show text.
     createText(config: { x: number; y: number; text: string; fontSize: string; color: string; }): Phaser.GameObjects.Text {
         return this.add.text(config.x, config.y, config.text, {
             fontSize: config.fontSize,
@@ -308,6 +322,7 @@ export default class Level extends Phaser.Scene {
     }
 
 
+    // Handle shadow click.
     handleShadowClick(texture: string) {
         if (this.isHandlingClick) return;
         this.isHandlingClick = true;
