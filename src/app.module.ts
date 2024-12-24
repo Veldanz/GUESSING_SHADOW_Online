@@ -3,6 +3,6 @@ import { SessionGateway } from './Session.gateway';
 import { SessionService } from './SessionService';
 
 @Module({
-  providers: [SessionGateway, SessionService]
+  //providers: [SessionGateway, SessionService]
 })
 export class AppModule {}

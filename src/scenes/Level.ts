@@ -2,14 +2,11 @@ import Phaser from "phaser";
 import ShadowContainer from "../prefabs/ShadowContainer";
 import Shadow from "../prefabs/Shadow";
 import { GameStateContent, GameInfo, UserInformation } from "~/data/gameState";
-import { io, Socket } from 'socket.io-client';
+
 export default class Level extends Phaser.Scene {
-
-    private socket: Socket;
-
-	constructor() {
-		super("Level");
-	}
+    constructor() {
+        super("Level");
+    }
 
     editorCreate(): void {
         const key_start_debug = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F1);
@@ -22,6 +19,7 @@ export default class Level extends Phaser.Scene {
     
     private shadowContainer!: ShadowContainer;
     private wrongText: Phaser.GameObjects.Text | null = null;
+    private isHandlingClick: boolean = false;
 
     gameInfo: GameInfo | undefined;
     gameState: GameStateContent | undefined;
@@ -37,40 +35,20 @@ export default class Level extends Phaser.Scene {
             this.initGame('debug');
         });
 
-                this.socket = io('http://localhost:3000', {
-                    reconnection: true,
-                    reconnectionAttempts: 5,
-                    reconnectionDelay: 1000
-                });
-        
-                this.socket.on('connect', () => {
-                    console.log('Socket connected with ID:', this.socket.id);
-                    
-                    this.joinRoom();
-                });
-        
-                this.socket.on('serverGameUpdate', (gameState) => {
-                    this.updateState(gameState);
-                });
-
         this.requestUserInfo();
-        window.addEventListener('message', this.handleMessage);
-    }
-
-    joinRoom() {
-        const roomName = this.userInfo?.preferred_username || 'defaultGameRoom';
-        
-        this.socket.emit('joinRoom', roomName);
     }
 
     requestGameStart() {
-        this.postMessage({
-            type: "requestParam",
-            payload: {
-                requestName: "startGame",
-                requestLocalization: "Please select a picture for the game.",
-                type: "string"
-            }
+        const startButton = this.add.text(this.scale.width / 2, this.scale.height / 2, "Start Game", {
+            fontSize: "32px",
+            color: "#ffffff",
+            backgroundColor: "#000000",
+            padding: { x: 10, y: 10 }
+        }).setOrigin(0.5).setInteractive();
+
+        startButton.on('pointerdown', () => {
+            this.initGame('start');
+            startButton.destroy();
         });
     }
 
@@ -106,7 +84,7 @@ export default class Level extends Phaser.Scene {
                     this.postMessage({
                         type: "clientGameUpdate",
                         payload: {
-                            shadowanswer: requestData.value,
+                            shadowAnswer: requestData.value,
                         }
                     });
                     break;
@@ -114,43 +92,49 @@ export default class Level extends Phaser.Scene {
             }
             break;
 
-            case "requestGame": {
+            case "restartGame": {
                 this.requestGameStart();
             }
             break;
         }
     };
 
-    postMessage = (message: Message) => {
-        if (message.type === 'clientGameUpdate') {
-            this.socket.emit('clientGameUpdate', message.payload);
-        } else {
-            if (window.parent !== window) {
-                window.parent.postMessage(message, '*');
-            }
-            if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify(message));
-            }
-        }
-
-        console.log('Sent to server');
-    }
+    postMessage = (message : Message) => {
+		// For web environment
+		if (window.parent !== window) {
+			console.info('PHASER(win) postMessage:', JSON.stringify(message));
+			window.parent.postMessage(
+				message,
+				'*'
+			);
+		}
+		// For React Native WebView
+		if (window.ReactNativeWebView) {
+			console.info('PHASER(native) postMessage:', JSON.stringify(message));
+			window.ReactNativeWebView.postMessage(
+				JSON.stringify(message)
+			);
+		}
+	};
 
     guessShadow(texture: string) {
         try {
             if (!this.gameState || this.gameState.currentState !== "WaitingState") return;
-
+    
             const isCorrect = this.isGuessCorrect(texture);
             const updatedGameState = {
                 ...this.gameState,
                 guessedShadow: texture,
                 playerWrongCount: isCorrect ? this.gameState.playerWrongCount : this.gameState.playerWrongCount + 1,
-                currentState: isCorrect ? "WaitingState" : "GuessState"
+                currentState: isCorrect ? "RightState" : "GuessState"
             };
-
-            this.socket.emit('clientGameUpdate', updatedGameState);
-
+    
             isCorrect ? this.showRightStateUI() : this.showWrongStateUI();
+    
+            this.postMessage({
+                type: "clientGameUpdate",
+                payload: updatedGameState
+            });
         }
         catch(e) {
             console.error(`${e}`);
@@ -158,7 +142,6 @@ export default class Level extends Phaser.Scene {
     }
 
     initGame(mainPicture: string) {
-
         if (this.gameState?.currentState === "WaitingState") {
             console.warn("Game already initialized.");
             return;
@@ -193,13 +176,9 @@ export default class Level extends Phaser.Scene {
     
         this.addMainPicture();
         this.setupShadowInteractions();
-        this.postMessage({
-            type: "clientGameUpdate",
-            payload: this.gameState,
-        });
     }
 
-    updateState(newState : any) {
+    updateState(newState: any) {
         if (!newState) return;
     
         var oldState = undefined;
@@ -209,6 +188,10 @@ export default class Level extends Phaser.Scene {
         console.info(`PHASER currentState: ${JSON.stringify(this.gameState)}`);
         if (this.gameState && oldState?.shadowAnswer != this.gameState?.shadowAnswer) {
             this.initGame(this.gameState!.shadowAnswer);
+        }
+    
+        if (this.gameState?.currentState === "RightState" || this.gameState?.currentState === "GameOverState") {
+            return;
         }
     
         this.gameState?.guessShadow.forEach(guessShadow => {
@@ -287,14 +270,14 @@ export default class Level extends Phaser.Scene {
                 currentState: "WaitingState",
                 currentLevel: this.gameState!.currentLevel + 1
             };
-            this.postMessage({
-                type: "clientGameUpdate",
-                payload: this.gameState
-            });
         });
     }
 
     showWrongStateUI() {
+        if (this.wrongText) {
+            this.wrongText.destroy();
+        }
+    
         this.wrongText = this.createText({
             x: this.scale.width / 2,
             y: this.scale.height / 2,
@@ -302,18 +285,18 @@ export default class Level extends Phaser.Scene {
             fontSize: "48px",
             color: "#ff0000"
         });
-
-        this.time.delayedCall(500, () => this.wrongText?.destroy());
-
-        if (this.gameState!.playerWrongCount >= this.gameState!.playerMaxWrong) {
-            this.gameState = { ...this.gameState!, currentState: "GameOverState" };
-        } else {
-            this.gameState = { ...this.gameState!, currentState: "WaitingState" };
-        }
-
-        this.postMessage({
-            type: "clientGameUpdate",
-            payload: this.gameState
+    
+        this.time.delayedCall(500, () => {
+            if (this.wrongText) {
+                this.wrongText.destroy();
+                this.wrongText = null;
+            }
+    
+            if (this.gameState!.playerWrongCount >= this.gameState!.playerMaxWrong) {
+                this.gameState = { ...this.gameState!, currentState: "GameOverState" };
+            } else {
+                this.gameState = { ...this.gameState!, currentState: "WaitingState" };
+            }
         });
     }
 
@@ -324,56 +307,64 @@ export default class Level extends Phaser.Scene {
         }).setOrigin(0.5);
     }
 
-    handleShadowClick(texture: string) {
-        // Check if the game is in right state or not.
-        if (!this.gameState || this.gameState.currentState !== "WaitingState") return;
-    
-        const shadowToGuess = this.gameState.shadows.find(shadow => shadow.texture === texture);
-        if (!shadowToGuess) return;
-    
-        if (this.gameState.guessShadow.includes(texture)) {
-            console.log("This shadow has already been guessed");
-            return;
-        }
-    
-        const updatedShadows = this.gameState.shadows.map(shadow => 
-            shadow.texture === texture 
-                ? { ...shadow, isSelected: true, isHovered: false }
-                : shadow
-        );
-    
-        const updatedGuessShadows = [...(this.gameState.guessShadow || []), texture];
-    
-        const isCorrect = this.isGuessCorrect(texture);
-    
-        this.gameState = {
-            ...this.gameState,
-            shadows: updatedShadows,
-            guessedShadow: texture,
-            guessShadow: updatedGuessShadows,
-            playerWrongCount: isCorrect ? this.gameState.playerWrongCount : this.gameState.playerWrongCount + 1,
-            currentState: isCorrect ? "WaitingState" : (
-                this.gameState.playerWrongCount + 1 >= this.gameState.playerMaxWrong 
-                ? "GameOverState" 
-                : "GuessState"
-            )
-        };
-    
-        const shadowContainer = this.shadowContainer;
-        if (shadowContainer) {
-            const shadowObject = shadowContainer.getShadowByTexture(texture);
-            if (shadowObject) {
-                shadowObject.setAlpha(0.5);
-                shadowObject.setInteractive(false);
-            }
-        }
-    
-        this.postMessage({
-            type: "clientGameUpdate",
-            payload: this.gameState
-        });
-    
-        isCorrect ? this.showRightStateUI() : this.showWrongStateUI();
-    }
 
+    handleShadowClick(texture: string) {
+        if (this.isHandlingClick) return;
+        this.isHandlingClick = true;
+
+        try {
+            if (!this.gameState || this.gameState.currentState !== "WaitingState") return;
+
+            const shadowToGuess = this.gameState.shadows.find(shadow => shadow.texture === texture);
+            if (!shadowToGuess) return;
+
+            if (this.gameState.guessShadow.includes(texture)) {
+                console.log("This shadow has already been guessed");
+                return;
+            }
+
+            const updatedShadows = this.gameState.shadows.map(shadow => 
+                shadow.texture === texture 
+                    ? { ...shadow, isSelected: true, isHovered: false }
+                    : shadow
+            );
+
+            const updatedGuessShadows = [...(this.gameState.guessShadow || []), texture];
+
+            const isCorrect = this.isGuessCorrect(texture);
+
+            this.gameState = {
+                ...this.gameState,
+                shadows: updatedShadows,
+                guessedShadow: texture,
+                guessShadow: updatedGuessShadows,
+                playerWrongCount: isCorrect ? this.gameState.playerWrongCount : this.gameState.playerWrongCount + 1,
+                currentState: isCorrect ? "WaitingState" : (
+                    this.gameState.playerWrongCount + 1 >= this.gameState.playerMaxWrong 
+                    ? "GameOverState" 
+                    : "GuessState"
+                )
+            };
+
+            const shadowContainer = this.shadowContainer;
+            if (shadowContainer) {
+                const shadowObject = shadowContainer.getShadowByTexture(texture);
+                if (shadowObject) {
+                    shadowObject.setAlpha(0.5);
+                    shadowObject.setInteractive(false);
+                }
+            }
+
+            isCorrect ? this.showRightStateUI() : this.showWrongStateUI();
+
+            this.postMessage({
+                type: "clientGameUpdate",
+                payload: this.gameState
+            });
+        } 
+        finally 
+        {
+            this.isHandlingClick = false;
+        }
+    }
 }
